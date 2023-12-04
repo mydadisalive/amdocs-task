@@ -1,0 +1,8 @@
+# Node.js
+#lambda_function/node_modules/
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
