@@ -1,42 +1,54 @@
 const AWS = require('aws-sdk');
-const s3 = new AWS.S3();
-const dynamodb = new AWS.DynamoDB();
+const dynamoDb = new AWS.DynamoDB();
 
 exports.handler = async (event) => {
-    console.log('Lambda started');
+    console.log('Lambda started.');
 
     // Check if there is an S3 event
     if (event.Records && event.Records.length > 0) {
+        // Extract the S3 object key (file name)
         const s3ObjectKey = event.Records[0].s3.object.key;
-        const s3Bucket = event.Records[0].s3.bucket.name;
-        const s3Region = event.Records[0].awsRegion;
 
-        console.log('File added to S3:', s3ObjectKey, 'in bucket:', s3Bucket);
-
-        const s3ObjectInfo = await s3.headObject({ Bucket: s3Bucket, Key: s3ObjectKey }).promise();
-        const creationTime = s3ObjectInfo.LastModified;
-
-        console.log('File creation time:', creationTime);
+        // Log the file name
+        console.log('File added to S3:', s3ObjectKey);
 
         // Construct the URL to the S3 object
-        const fileUrl = `https://${s3Bucket}.s3.${s3Region}.amazonaws.com/${s3ObjectKey}`;
-        console.log('File URL:', fileUrl);
+        const s3Bucket = event.Records[0].s3.bucket.name;
+        const s3ObjectURL = `https://${s3Bucket}.s3.amazonaws.com/${s3ObjectKey}`;
 
-        // Add data to DynamoDB with the URL in the 'data' field
-        const dynamoParams = {
-            TableName: "s3_to_dynamodb",  // Use the actual DynamoDB table name
-            Item: {
-                'id': { S: s3ObjectKey }, // Assuming 'id' is your hash key
-                'timestamp': { N: creationTime.getTime().toString() }, // Assuming 'timestamp' is your range key
-                'data': { S: fileUrl }
-            }
+        // Check if an item with the same id already exists in DynamoDB
+        const queryParams = {
+            TableName: 's3_to_dynamodb',
+            KeyConditionExpression: 'id = :id',
+            ExpressionAttributeValues: {
+                ':id': { S: s3ObjectKey },
+            },
         };
 
-        await dynamodb.putItem(dynamoParams).promise();
+        try {
+            const queryResult = await dynamoDb.query(queryParams).promise();
 
-        console.log('Data added to DynamoDB');
+            // If the query result is non-empty, an item with the same id already exists
+            if (queryResult.Items && queryResult.Items.length > 0) {
+                console.log('Item with the same id already exists. Skipping insertion.');
+            } else {
+                // Insert the item into DynamoDB
+                const putParams = {
+                    TableName: 's3_to_dynamodb',
+                    Item: {
+                        'id': { S: s3ObjectKey },
+                        'timestamp': { N: Date.now().toString() },
+                        'data': { S: s3ObjectURL },
+                    },
+                };
 
-        // You can continue with additional processing or return a response as needed.
+                await dynamoDb.putItem(putParams).promise();
+                console.log('Item inserted into DynamoDB.');
+            }
+        } catch (error) {
+            console.error('Error checking or inserting item into DynamoDB:', error);
+            throw error;
+        }
     }
 
     const response = {
